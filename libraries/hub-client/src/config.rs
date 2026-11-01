@@ -154,12 +154,18 @@ impl ResolvedConfig {
         if let Ok(path) = std::env::var("DORA_HUB_CONFIG") {
             return Self::load_from(Path::new(&path));
         }
-        let Some(config_dir) = dirs::config_dir() else {
+        Self::load_default_in(dirs::config_dir(), dirs::home_dir())
+    }
+
+    /// [`Self::load_default`] past the `DORA_HUB_CONFIG` override, with the
+    /// platform config and home directories passed in (tests use a temp dir).
+    fn load_default_in(config_dir: Option<PathBuf>, home: Option<PathBuf>) -> eyre::Result<Self> {
+        let Some(config_dir) = config_dir else {
             return Self::new(Vec::new(), PathBuf::from("."));
         };
         let path = config_dir.join("dora").join("hub.toml");
         if !path.is_file() {
-            let linux_path = dirs::home_dir().map(|home| home.join(".config/dora/hub.toml"));
+            let linux_path = home.map(|home| home.join(".config/dora/hub.toml"));
             ensure_not_misplaced(&path, linux_path.as_deref())?;
         }
         Self::load_from(&path)
@@ -296,6 +302,32 @@ mod tests {
         assert!(msg.contains(&linux_path.display().to_string()), "{msg}");
         assert!(msg.contains(&expected.display().to_string()), "{msg}");
         assert!(msg.contains("DORA_HUB_CONFIG"), "{msg}");
+    }
+
+    /// The check is wired into the default load, not only the helper: with
+    /// a macOS-style config dir, a file at the Linux path fails the load,
+    /// and the platform file wins once it exists.
+    #[test]
+    fn default_load_reports_a_misplaced_hub_toml() {
+        let home = tempfile::tempdir().unwrap();
+        let config_dir = home.path().join("Library/Application Support");
+        let linux_path = home.path().join(".config/dora/hub.toml");
+        std::fs::create_dir_all(linux_path.parent().unwrap()).unwrap();
+        let acme = "[[index]]\nalias = \"acme\"\npath = \"/srv/acme\"\nnamespaces = [\"acme\"]\n";
+        std::fs::write(&linux_path, acme).unwrap();
+
+        let err =
+            ResolvedConfig::load_default_in(Some(config_dir.clone()), Some(home.path().to_owned()))
+                .expect_err("a misplaced hub.toml must fail the default load");
+        assert!(format!("{err:#}").contains("DORA_HUB_CONFIG"), "{err:#}");
+
+        let platform_path = config_dir.join("dora/hub.toml");
+        std::fs::create_dir_all(platform_path.parent().unwrap()).unwrap();
+        std::fs::write(&platform_path, acme).unwrap();
+        let config =
+            ResolvedConfig::load_default_in(Some(config_dir), Some(home.path().to_owned()))
+                .unwrap();
+        assert_eq!(config.index_for_namespace("acme").alias, "acme");
     }
 
     #[test]

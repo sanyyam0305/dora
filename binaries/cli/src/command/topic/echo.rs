@@ -129,7 +129,7 @@ fn inspect(
         .map(|t| (t.node_id.clone(), t.data_id.clone()))
         .collect();
 
-    let (_subscription_id, data_rx) = session.subscribe_topics_direct(
+    let (subscription_id, data_rx) = session.subscribe_topics_direct(
         dataflow_id,
         ws_topics,
         crate::ws_client::TopicBufferLimits::LIVE,
@@ -174,6 +174,13 @@ fn inspect(
                         "{}: no topic data received during the wait window. Ensure `debug.enable_debug_inspection: true` is enabled on the dataflow.",
                         "hint".yellow().bold(),
                     );
+                    // A nil id: the data is read straight from zenoh.
+                    if subscription_id.is_nil() {
+                        eprintln!(
+                            "{}: if it is, set `DORA_TOPIC_DIRECT=off` to read the topic through the coordinator instead.",
+                            "hint".yellow().bold(),
+                        );
+                    }
                     hint_shown = true;
                 }
                 continue;

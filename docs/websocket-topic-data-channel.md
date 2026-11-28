@@ -185,14 +185,27 @@ zenoh, so their data doesn't pass through the coordinator. Their request sets
   links to a single endpoint. It subscribes there to the outputs' data and
   `@schema` keys, and rebuilds each sample into the same frame payload a relayed
   frame carries.
+- It also subscribes to each output's control key. A message that takes the
+  daemon path instead of the node's own zenoh publisher (every message of an
+  output pinned there, for example one with a `queue_policy: backpressure`
+  consumer) is published there by the daemon, as the relayed frame payload,
+  while anything subscribes in a debug dataflow. Each message takes one of the
+  two keys.
 
 The CLI relays instead, on the same receiver, when it can't use the direct path:
 - the coordinator answers without `zenoh_sources`, because a daemon has no
   endpoint the CLI can dial or because the coordinator predates the field;
+- an endpoint is a loopback one but the CLI didn't reach the coordinator on its
+  host, by the coordinator's own rule. Behind a reverse proxy on that host, the
+  coordinator sees the CLI as local;
 - an endpoint can't be reached within 3 seconds;
 - `DORA_TOPIC_DIRECT=off` is set.
 
 `dora record --proxy` always relays.
+
+If the direct path connects but nothing arrives, for example through an SSH
+tunnel to the coordinator, which both sides see as local, `dora topic echo`'s
+no-data hint points to `DORA_TOPIC_DIRECT=off`.
 
 A direct subscriber reads zenoh like any other peer on the network, so the
 coordinator's token and `enable_debug_inspection` only gate the request for the

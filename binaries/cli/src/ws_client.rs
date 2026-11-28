@@ -110,6 +110,9 @@ struct IncomingFrame {
 pub struct WsSession {
     rt: tokio::runtime::Runtime,
     cmd_tx: mpsc::UnboundedSender<SessionCommand>,
+    /// Whether this connection reached the coordinator on its own host (see
+    /// [`crate::topic_direct::on_coordinator_host`]).
+    on_coordinator_host: bool,
 }
 
 enum SessionCommand {
@@ -182,11 +185,24 @@ impl WsSession {
             })
             .map_err(|e| connect_failure(addr, e))?
             .0;
+        let on_coordinator_host = match ws_stream.get_ref() {
+            tokio_tungstenite::MaybeTlsStream::Plain(tcp) => {
+                match (tcp.peer_addr(), tcp.local_addr()) {
+                    (Ok(peer), Ok(local)) => crate::topic_direct::on_coordinator_host(peer, local),
+                    _ => false,
+                }
+            }
+            _ => false,
+        };
 
         let (cmd_tx, cmd_rx) = mpsc::unbounded_channel();
         rt.spawn(session_loop(ws_stream, cmd_rx));
 
-        let session = Self { rt, cmd_tx };
+        let session = Self {
+            rt,
+            cmd_tx,
+            on_coordinator_host,
+        };
 
         // Protocol version handshake — sent before any other request.
         // Fails fast on version mismatch so the CLI never silently
@@ -280,7 +296,7 @@ impl WsSession {
     /// Falls back to the relayed stream, on the same receiver, when the
     /// coordinator answers with one (it predates direct subscriptions, or a
     /// daemon has no endpoint this CLI can dial) or when a zenoh endpoint
-    /// can't be reached. `DORA_TOPIC_DIRECT=off` always relays. The returned
+    /// can't be dialed from here or reached. `DORA_TOPIC_DIRECT=off` always relays. The returned
     /// id is nil for a direct subscription: nothing is relayed to unsubscribe.
     pub fn subscribe_topics_direct(
         &self,
@@ -304,6 +320,7 @@ impl WsSession {
         match self.rt.block_on(crate::topic_direct::subscribe(
             dataflow_id,
             sources,
+            self.on_coordinator_host,
             subscriber,
         )) {
             Ok(()) => Ok((Uuid::nil(), data_rx)),
